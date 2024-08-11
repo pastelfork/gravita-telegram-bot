@@ -139,36 +139,24 @@ class Deployment:
 
                 await self.notify_users(liquidated_borrowers, 'liquidation')
 
-
 async def main():
     # Create instances of the class
-    mainnet_deployment = Deployment(chain='mainnet')
-    await mainnet_deployment.process_redemption_events()
-    await mainnet_deployment.process_liquidation_events()
+    deployments = [
+        Deployment(chain='mainnet'),
+        Deployment(chain='arbitrum'),
+        Deployment(chain='linea'),
+        Deployment(chain='mantle'),
+        Deployment(chain='optimism'),
+        Deployment(chain='polygonzkevm'),
+        Deployment(chain='zksync')
+    ]
 
-    arbitrum_deployment = Deployment(chain='arbitrum')
-    await arbitrum_deployment.process_redemption_events()
-    await arbitrum_deployment.process_liquidation_events()
+    tasks = []
+    for deployment in deployments:
+        tasks.append(deployment.process_redemption_events())
+        tasks.append(deployment.process_liquidation_events())
 
-    linea_deployment = Deployment(chain='linea')
-    await linea_deployment.process_redemption_events()
-    await linea_deployment.process_liquidation_events()
-    
-    mantle_deployment = Deployment(chain='mantle')
-    await mantle_deployment.process_redemption_events()
-    await mantle_deployment.process_liquidation_events()
-    
-    optimism_deployment = Deployment(chain='optimism')
-    await optimism_deployment.process_redemption_events()
-    await optimism_deployment.process_liquidation_events()
-    
-    polygonzkevm_deployment = Deployment(chain='polygonzkevm')
-    await polygonzkevm_deployment.process_redemption_events()
-    await polygonzkevm_deployment.process_liquidation_events()
-    
-    zksync_deployment = Deployment(chain='zkSync')
-    await zksync_deployment.process_redemption_events()
-    await zksync_deployment.process_liquidation_events()
+    await asyncio.gather(*tasks)
 
 if __name__ == '__main__':
     asyncio.run(main())
