@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import websockets
 
 from dotenv import load_dotenv
 
@@ -67,79 +68,88 @@ class Deployment:
 
     async def process_redemption_events(self):
 
-        async with AsyncWeb3(WebSocketProvider(self.rpc_url)) as w3:
-            # Subscribe to redemption topic
+        async for w3 in AsyncWeb3(WebSocketProvider(self.rpc_url)):
+            try:
+                # Subscribe to redemption topic
+                redemption_filter_params = {
+                    'address': chain_configs[self.chain]['contracts']['vessel_manager_ops'],
+                    'topics': [
+                        TOPICS['redemption']
+                    ]
+                }
 
-            redemption_filter_params = {
-                'address': chain_configs[self.chain]['contracts']['vessel_manager_ops'],
-                'topics': [
-                    TOPICS['redemption']
-                ]
-            }
-
-            await w3.eth.subscribe('logs', redemption_filter_params)
-            
-            # process messages
-            async for message in w3.socket.process_subscriptions():
+                await w3.eth.subscribe('logs', redemption_filter_params)
                 
-                # Process redemption events
-                redemption_event = message['result']
-                print(f'redemption_event:\n {redemption_event}\n\n')
+                # process messages
+                async for message in w3.socket.process_subscriptions():
+                    
+                    # Process redemption events
+                    redemption_event = message['result']
+                    print(f'redemption_event:\n {redemption_event}\n\n')
 
-                redemption_txn_hash = Web3.to_hex(redemption_event['transactionHash'])
-                redemption_txn_receipt = await w3.eth.get_transaction_receipt(redemption_txn_hash)
-                redemption_logs = redemption_txn_receipt.logs
-                vessel_updated_events = [event for event in redemption_logs if Web3.to_hex(event.topics[0]) == TOPICS['vessel_updated']]
-                redeemed_vessels: list[dict] = []
-                for update in vessel_updated_events:
-                    decoded_data = decode(['uint256', 'uint256', 'uint256', 'uint256'], update.data)
-                    borrower = decode(['address'], update.topics[2])[0]
-                    borrower = str(Web3.to_checksum_address(borrower))
-                    redeemed_vessels.append(
-                        {
-                            'chain_name': self.chain,
-                            'borrower': borrower,
-                            'new_debt': decoded_data[0],
-                            'new_collateral': decoded_data[1],
-                            'txn_hash': redemption_txn_hash
-                        }
-                    )
-                await self.notify_users(redeemed_vessels, 'redemption')
+                    redemption_txn_hash = Web3.to_hex(redemption_event['transactionHash'])
+                    redemption_txn_receipt = await w3.eth.get_transaction_receipt(redemption_txn_hash)
+                    redemption_logs = redemption_txn_receipt.logs
+                    vessel_updated_events = [event for event in redemption_logs if Web3.to_hex(event.topics[0]) == TOPICS['vessel_updated']]
+                    redeemed_vessels: list[dict] = []
+                    for update in vessel_updated_events:
+                        decoded_data = decode(['uint256', 'uint256', 'uint256', 'uint256'], update.data)
+                        borrower = decode(['address'], update.topics[2])[0]
+                        borrower = str(Web3.to_checksum_address(borrower))
+                        redeemed_vessels.append(
+                            {
+                                'chain_name': self.chain,
+                                'borrower': borrower,
+                                'new_debt': decoded_data[0],
+                                'new_collateral': decoded_data[1],
+                                'txn_hash': redemption_txn_hash
+                            }
+                        )
+                    await self.notify_users(redeemed_vessels, 'redemption')
+
+            # Reconnect if connection is closed
+            except websockets.ConnectionClosed:
+                continue
 
 
     async def process_liquidation_events(self):
 
-        async with AsyncWeb3(WebSocketProvider(self.rpc_url)) as w3:
-            # Subscribe to topics
+        async for w3 in AsyncWeb3(WebSocketProvider(self.rpc_url)):
+            try:
+                # Subscribe to topics
+                liquidation_filter_params = {
+                    'address': chain_configs[self.chain]['contracts']['vessel_manager_ops'],
+                    'topics': [
+                        TOPICS['vessel_liquidated']
+                    ]
+                }
 
-            liquidation_filter_params = {
-                'address': chain_configs[self.chain]['contracts']['vessel_manager_ops'],
-                'topics': [
-                    TOPICS['vessel_liquidated']
-                ]
-            }
+                await w3.eth.subscribe('logs', liquidation_filter_params)
+                
+                # process messages
+                async for message in w3.socket.process_subscriptions():
+                    liquidation_event = message['result']
+                    liquidated_borrowers: list[dict] = []
+                    print(f'liquidation_event:\n {liquidation_event}\n\n')
+                    liquidation_txn_hash = Web3.to_hex(liquidation_event['transactionHash'])
+                    borrower = decode(['address'], liquidation_event.topics[2])[0]
+                    borrower = str(Web3.to_checksum_address(borrower))
+                    liquidated_borrowers.append(
+                        {
+                            'chain_name': self.chain,
+                            'borrower': borrower,
+                            'txn_hash': liquidation_txn_hash
+                        }
+                    )
 
-            await w3.eth.subscribe('logs', liquidation_filter_params)
-            
-            # process messages
-            async for message in w3.socket.process_subscriptions():
-                liquidation_event = message['result']
-                liquidated_borrowers: list[dict] = []
-                print(f'liquidation_event:\n {liquidation_event}\n\n')
-                liquidation_txn_hash = Web3.to_hex(liquidation_event['transactionHash'])
-                borrower = decode(['address'], liquidation_event.topics[2])[0]
-                borrower = str(Web3.to_checksum_address(borrower))
-                liquidated_borrowers.append(
-                    {
-                        'chain_name': self.chain,
-                        'borrower': borrower,
-                        'txn_hash': liquidation_txn_hash
-                    }
-                )
+                    await self.notify_users(liquidated_borrowers, 'liquidation')
 
-                await self.notify_users(liquidated_borrowers, 'liquidation')
+            # Reconnect if connection is closed
+            except websockets.ConnectionClosed:
+                continue
 
 async def main():
+    print("Starting main function...")
     # Create instances of the class
     deployments = [
         Deployment(chain='mainnet'),
@@ -151,13 +161,18 @@ async def main():
         Deployment(chain='zksync')
     ]
 
+    print(f"Created {len(deployments)} deployment instances")
+
     tasks = []
     for deployment in deployments:
+        print(f"Adding tasks for {deployment.chain}")
         tasks.append(deployment.process_redemption_events())
         tasks.append(deployment.process_liquidation_events())
 
+    print(f"Total tasks created: {len(tasks)}")
+    print("Starting asyncio.gather...")
     await asyncio.gather(*tasks)
-
+    print("asyncio.gather completed")
 if __name__ == '__main__':
     asyncio.run(main())
     
