@@ -70,6 +70,7 @@ class Deployment:
 
         async for w3 in AsyncWeb3(WebSocketProvider(self.rpc_url)):
             try:
+                print(f'Connection to {self.chain} websocket: {await w3.is_connected()}')
                 # Subscribe to redemption topic
                 redemption_filter_params = {
                     'address': chain_configs[self.chain]['contracts']['vessel_manager_ops'],
@@ -116,6 +117,7 @@ class Deployment:
 
         async for w3 in AsyncWeb3(WebSocketProvider(self.rpc_url)):
             try:
+                print(f'Connection to {self.chain} websocket: {await w3.is_connected()}')
                 # Subscribe to topics
                 liquidation_filter_params = {
                     'address': chain_configs[self.chain]['contracts']['vessel_manager_ops'],
